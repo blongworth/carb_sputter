@@ -1,0 +1,51 @@
+---
+title: "Carbonate Sputter Test"
+date: "2020-12-10"
+output: html_notebook
+---
+
+Checking out data from carb sputter test on CFAMS121020. Precision was good, but accuracy not so much. Is this a 13C thing?
+
+```{r}
+library(tidyverse)
+library(amstools)
+
+options(digits = 2)
+```
+
+```{r}
+dfr <- getRawWheel("CFAMS121020")
+df <- getWheel("CFAMS121020")
+
+df %>% 
+  filter(wheel_pos %in% c(15, 84, 81, 97, 99, 100, 101))
+dfr %>% 
+  filter(wheel_pos %in% c(15, 84, 81, 97, 99, 100, 101)) %>% 
+  select(wheel_pos, sample_name, le12c, le13c, he12c, he13c, he13_12, he14_12, corr_14_12, d13c) %>% 
+  mutate(hele13 = he13c/le13c,
+         hele12 = he12c/le12c) %>% 
+  group_by(wheel_pos) %>% 
+  summarise_all(mean) 
+```
+
+```{r}
+names(dfr)
+dfr %>% 
+  filter(wheel_pos %in% c(15, 84, 81, 97, 99, 100, 101)) %>% 
+  ggplot(aes(mst_num)) +
+  geom_point(aes(y = le13c), size = 1) +
+  geom_point(aes(y = he13c), size = 1, color = "blue") +
+  scale_y_log10() +
+  facet_wrap(vars(wheel_pos))
+```
+
+
+```{r}
+dfr %>% 
+  filter(wheel_pos %in% c(15, 84, 81, 97, 99, 100, 101)) %>% 
+  ggplot(aes(mst_num)) +
+  geom_point(aes(y = le12c), size = 1) +
+  geom_point(aes(y = he12c), size = 1, color = "blue") +
+  scale_y_log10() +
+  facet_wrap(vars(wheel_pos))
+```
