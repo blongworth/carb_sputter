@@ -1,7 +1,9 @@
 ---
 title: "Carbonate Sputter Test"
-date: "2020-12-10"
-output: html_notebook
+date: '2020-12-10'
+output:
+  html_document:
+    df_print: paged
 ---
 
 Checking out data from carb sputter test on CFAMS121020. Precision was good, but accuracy not so much. Is this a 13C thing?
@@ -9,29 +11,41 @@ Checking out data from carb sputter test on CFAMS121020. Precision was good, but
 ```{r}
 library(tidyverse)
 library(amstools)
+library(here)
 
-options(digits = 2)
+options(digits = 3)
 ```
 
 ```{r}
-dfr <- getRawWheel("CFAMS121020")
-df <- getWheel("CFAMS121020")
+dfro <- read_csv(here("data/old_raw_carb_sputter.csv"))
+dfr <- read_csv(here("data/raw_carb_sputter.csv"))
+df <- read_csv(here("data/carb_sputter.csv"))
 
-df %>% 
-  filter(wheel_pos %in% c(15, 84, 81, 97, 99, 100, 101))
-dfr %>% 
-  filter(wheel_pos %in% c(15, 84, 81, 97, 99, 100, 101)) %>% 
-  select(wheel_pos, sample_name, le12c, le13c, he12c, he13c, he13_12, he14_12, corr_14_12, d13c) %>% 
-  mutate(hele13 = he13c/le13c,
-         hele12 = he12c/le12c) %>% 
-  group_by(wheel_pos) %>% 
-  summarise_all(mean) 
+dfs <- df %>% 
+  select(wheel, wheel_pos, sample_name, norm_ratio, fm_corr, sig_fm_corr, del_13c, sig_13c)
+dfs
 ```
+
+
+```{r}
+dfrs <- dfr %>% 
+  select(wheel, wheel_pos, sample_name, le12c, le13c, he12c, 
+         he13c, he13_12, he14_12, corr_14_12, d13c) %>% 
+  mutate(he1312 = he13c/he12c,
+         le1312 = le13c/le12c,
+         hele13 = he13c/le13c,
+         hele12 = he12c/le12c) %>% 
+  group_by(wheel, wheel_pos, sample_name) %>% 
+  summarise_all(mean) 
+dfrs
+```
+
+
+Note difference in ratio of he13C to le13C between graphite and carbonate. A lot more "something" with mass 13 is making it through the accelerator. 12CH? Would this be an issue with USAMS?
 
 ```{r}
 names(dfr)
 dfr %>% 
-  filter(wheel_pos %in% c(15, 84, 81, 97, 99, 100, 101)) %>% 
   ggplot(aes(mst_num)) +
   geom_point(aes(y = le13c), size = 1) +
   geom_point(aes(y = he13c), size = 1, color = "blue") +
@@ -42,10 +56,40 @@ dfr %>%
 
 ```{r}
 dfr %>% 
-  filter(wheel_pos %in% c(15, 84, 81, 97, 99, 100, 101)) %>% 
   ggplot(aes(mst_num)) +
   geom_point(aes(y = le12c), size = 1) +
   geom_point(aes(y = he12c), size = 1, color = "blue") +
   scale_y_log10() +
   facet_wrap(vars(wheel_pos))
 ```
+
+
+# Previous results
+
+Get old raw data
+
+Did we see similar performance during initial investigations?
+
+```{r}
+dfros <- dfro %>% 
+  select(wheel, wheel_pos = Pos, sample_name = Sample.Name, le12c = le12C, le13c = le13C, he12c = he12C, 
+         he13c = he13C, he13_12 = X13.12he, he14_12 = X14.12he, corr_14_12 = cor1412he) %>% 
+  mutate(d13c = 1000 * (he13_12 - 1),
+         he1312 = he13c/he12c,
+         le1312 = le13c/le12c,
+         hele13 = he13c/le13c,
+         hele12 = he12c/le12c) %>% 
+  group_by(wheel, wheel_pos, sample_name) %>% 
+  summarise_all(mean) 
+dfros
+```
+
+```{r}
+names(dfros)
+```
+
+
+```{r}
+names(dfrs)
+```
+
