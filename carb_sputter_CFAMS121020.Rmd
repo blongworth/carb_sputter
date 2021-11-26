@@ -93,3 +93,15 @@ names(dfros)
 names(dfrs)
 ```
 
+```{r}
+us042321 <- amstools::readResfile("/mnt/shared/USAMS/Results/USAMS042321R.txt") %>% 
+  mungeResfile()
+
+```
+
+```{r}
+ussum <- us042321 %>% 
+  group_by(Pos) %>% 
+  summarize(lec = mean(le12C))
+```
+

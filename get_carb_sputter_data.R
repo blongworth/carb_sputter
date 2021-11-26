@@ -30,7 +30,7 @@ wheels <- list("2010 Results/CFAMS010810" = c(66:80),
                "2010 Results/CFAMS073010" = c(25:41), 
                "2010 Results/CFAMS122010" = c(15:22), 
                "2011 Results/CFAMS012111" = c(38:61), 
-               "2011 Results/CFAMS050211" = c(42:73)) 
+               "2011 Results/CFAMS050211" = c(42:73))
 paths <- file.path(dir, paste0(names(wheels), "R.XLS"))  
 
 # function to get lines for positions from results file
@@ -51,5 +51,9 @@ readPos <- function(file, pos) {
 data <- map2_dfr(paths, wheels, readPos)  %>% 
     mungeResfile()
 
+udata <- readPos("/mnt/shared/USAMS/Results/USAMS112321R.txt", c(0:11)) %>% 
+  mutate(wheel = "USAMS112321") %>% 
+  mungeResfile()
+data <- bind_rows(data, udata)
 # write data to a file
 write_csv(data, here("data/old_raw_carb_sputter.csv"))
