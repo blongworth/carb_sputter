@@ -1,0 +1,172 @@
+---
+title: "USAMS112321 Carb Sputter"
+author: "Brett Longworth"
+date: "11/28/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(amstools)
+```
+
+Functions for adding consensus value and blank correction.
+
+```{r}
+add_consenus <- function(df) {
+  # get rec_num
+  db <- conNOSAMS()
+  query <- glue::glue_sql("SELECT tp_num, rec_num
+             FROM target
+             WHERE tp_num IN ({tpnums*})",
+             tpnums = df[['tp_num']],
+             .con = db
+  )
+  
+  recs <- odbc::dbSendQuery(db, query)
+  recnums <- odbc::dbFetch(recs)
+  odbc::dbClearResult(recs)
+  df <- left_join(df, recnums)
+  # get cons table
+  std <- amstools::getStdTable()
+  # join on rec_num
+  df %>%  
+    left_join(select(std, rec_num, fm_consensus), by = "rec_num") %>% 
+    mutate(fm_consensus = case_when(rec_num == 101730 ~ 1.0398,
+                                    rec_num == 72446 ~ 0.0013,
+                                    TRUE ~ fm_consensus))
+}
+
+blank_cor_carb <- function(data, blanks = NULL, fmstd = 1.0398) {
+  if (!is.null(blanks)) {
+    data <- data %>% 
+      mutate(sample_type = case_when(wheel_pos %in% blanks ~ "B",
+                                     sample_type == "B" ~ "U",
+                                     TRUE ~ sample_type ))
+  }
+  
+  blanks <- data %>% 
+    filter(sample_type == "B")
+  
+  data['sig_norm_ratio'] <- pmax(data['int_err'], data['ext_err'])
+  
+  meanblank <- mean(blanks$norm_ratio)
+  
+  # get blank error using SNICSer error floor
+  blankerr <- amstools::blankErr(blanks$norm_ratio, blanks$sig_norm_ratio) # uses SNICSer error floor method
+  # apply blank correction and propagate error
+  data %>% 
+    mutate(fm_corr = amstools::doLBC(norm_ratio, meanblank, fmstd),
+           sig_fm_corr = amstools::doLBCerr(norm_ratio, meanblank, fmstd, sig_norm_ratio, blankerr)
+    )
+}
+```
+
+Load data, blank correct, add consensus values and comparison to consensus
+
+```{r}
+# consensus value for druffel coral
+dcmean <- 0.9413
+
+wheel <- getWheel("USAMS112621") %>% 
+  blank_cor_carb(blanks = c(20,21)) %>% 
+  add_consenus() %>% 
+  mutate(fm_consensus = ifelse(rec_num == 21308, dcmean, fm_consensus),
+         fm_diff = fm_corr - fm_consensus,
+         sigma = amstools::sigma(fm_corr, fm_consensus, sig_fm_corr))
+
+results <- wheel %>% 
+  filter(wheel_pos %in% c(2:11, 13:21)) %>% 
+  select(wheel_pos, rec_num, sample_name, norm_ratio, sig_norm_ratio, fm_corr, sig_fm_corr, fm_diff, sigma)
+```
+
+```{r}
+knitr::kable(results)
+```
+
+```{r}
+ggplot(results, aes(fm_corr, fm_diff)) +
+  geom_point()
+```
+
+
+
+## Agreement with graphite
+
+Agreement of Haiti core samples. Graphite samples were pretreated with HCl to leach 30% of the sample. HGIS samples not pretreated.
+
+Load Simon's data and compare
+
+```{r}
+names <- results %>% 
+  select(rec_num, sample_name)
+
+graphite_results <- getRecOS(results$rec_num) %>% 
+  filter(!is.na(reported)) %>% 
+  select(rec_num, fm_corr = f_modern, sig_fm_corr = f_ext_error) %>% 
+  mutate(method = "graphite") %>% 
+  left_join(names, by = "rec_num")
+
+combined_results <- results %>% 
+  filter(str_starts(sample_name, "Pendleton")) %>% 
+  mutate(method = "direct carb") %>% 
+  select(sample_name, method, rec_num, fm_corr, sig_fm_corr) %>% 
+  bind_rows(graphite_results) %>% 
+  group_by(rec_num) %>% 
+  mutate(fm_mean = mean(fm_corr),
+         fm_diff = fm_corr - fm_mean) %>% 
+  left_join(rename(names, Name = sample_name), by = "rec_num") %>% 
+  ungroup()
+
+combined_results %>% 
+  select(sample_name, rec_num, method, fm_corr, sig_fm_corr) %>% 
+  arrange(rec_num) %>% 
+knitr::kable()
+```
+
+### Difference plot
+
+```{r}
+combined_results %>% 
+  ggplot(aes(fm_corr, fm_diff, color = method, shape = method)) +
+  geom_hline(yintercept = 0) +
+  geom_pointrange(aes(ymin = fm_diff - sig_fm_corr, 
+                      ymax = fm_diff + sig_fm_corr),
+                  size = 1) +#,
+                  #position = position_dodge2(width = 0.02)) +
+  #ylim(-0.02, 0.02) +
+  labs(title = "Haiti Core Graphite vs HGIS",
+       x = "Fraction modern",
+       y = "Fm - mean Fm") + theme_classic()
+```
+
+```{r}
+combined_results %>% 
+  ggplot(aes(rec_num, fm_corr, color = method, shape = method)) +
+  geom_pointrange(aes(ymin = fm_corr - sig_fm_corr, 
+                      ymax = fm_corr + sig_fm_corr),
+                  size = .5,
+                  position=position_dodge(width = .5)) +#,
+                  #position = position_dodge2(width = 0.02)) +
+  #ylim(-0.02, 0.02) +
+  labs(title = "Haiti Core Graphite vs HGIS",
+       y = "Fraction modern") +
+  theme_classic() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  facet_wrap("Name", scales = "free")
+```
+
+### Outliers
+
+Need to get current
+
+```{r}
+combined_results %>% 
+  filter(abs(fm_diff) > 0.02) %>% 
+  select(sample_name, method, fm_corr, sig_fm_corr)
+```
