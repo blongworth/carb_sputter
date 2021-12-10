@@ -12,6 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(tidyverse)
 library(amstools)
+library(scales)
 ```
 
 Functions for adding consensus value and blank correction.
@@ -72,16 +73,66 @@ Load data, blank correct, add consensus values and comparison to consensus
 # consensus value for druffel coral
 dcmean <- 0.9413
 
+raw <- getRawWheel("USAMS112621")
+
+rawsum <- raw %>%
+  filter(ok_calc == 1) %>% 
+  select(wheel_pos, he12c) %>% 
+  group_by(wheel_pos) %>% 
+  summarize(he12c = mean(he12c))
+
 wheel <- getWheel("USAMS112621") %>% 
   blank_cor_carb(blanks = c(20,21)) %>% 
+  left_join(rawsum, by = "wheel_pos") %>% 
   add_consenus() %>% 
+  mutate(rec_num = if_else(wheel_pos == 10, 171988L, rec_num)) %>% # fix labelling error
   mutate(fm_consensus = ifelse(rec_num == 21308, dcmean, fm_consensus),
          fm_diff = fm_corr - fm_consensus,
          sigma = amstools::sigma(fm_corr, fm_consensus, sig_fm_corr))
 
 results <- wheel %>% 
   filter(wheel_pos %in% c(2:11, 13:21)) %>% 
-  select(wheel_pos, rec_num, sample_name, norm_ratio, sig_norm_ratio, fm_corr, sig_fm_corr, fm_diff, sigma)
+  select(wheel_pos, rec_num, sample_name, he12c, norm_ratio, sig_norm_ratio, fm_corr, sig_fm_corr, fm_diff, sigma)
+
+graphite_results <- getRecOS(results$rec_num) %>% 
+  filter(!is.na(reported)) %>% 
+  select(rec_num, fm_corr = f_modern, sig_fm_corr = f_ext_error) %>% 
+  mutate(method = "graphite") %>% 
+  left_join(names, by = "rec_num")
+
+combined_results <- results %>% 
+  filter(str_starts(sample_name, "Pendleton")) %>% 
+  mutate(method = "direct carb") %>% 
+  select(sample_name, method, rec_num, he12c, fm_corr, sig_fm_corr) %>% 
+  bind_rows(graphite_results) %>% 
+  group_by(rec_num) %>% 
+  mutate(fm_mean = mean(fm_corr),
+         fm_diff_mean = fm_corr - fm_mean) %>% 
+  left_join(rename(names, Name = sample_name), by = "rec_num") %>% 
+  left_join(select(graphite_results, rec_num, fm_corr_gr = fm_corr)) %>% 
+  mutate(fm_diff = fm_corr - fm_corr_gr) %>% 
+  ungroup()
+
+
+depth <- read_csv("data/haiti_depth.csv")
+
+combined_results <- left_join(combined_results, depth, by = "rec_num") %>% 
+  mutate(rc_age = -8033 * log(fm_corr),
+         sig_rc_age = rc_age - -8033 * log(fm_corr + sig_fm_corr))
+
+# No outliers
+cr_no <- combined_results %>% 
+  filter(abs(fm_diff_mean) < 0.03)
+
+mean_diff <- cr_no %>% 
+  filter(method == "direct carb") %>% 
+  summarise(across(fm_diff, list(mean = mean, sd = sd)))
+
+mean_errs <- cr_no %>% 
+  group_by(method) %>% 
+  summarise(mean_sig = mean(sig_fm_corr)) %>% 
+  pivot_wider(names_from = method,
+              values_from = mean_sig)
 ```
 
 ```{r}
@@ -99,50 +150,8 @@ ggplot(results, aes(fm_corr, fm_diff)) +
 
 Agreement of Haiti core samples. Graphite samples were pretreated with HCl to leach 30% of the sample. HGIS samples not pretreated.
 
-Load Simon's data and compare
-
-```{r}
-names <- results %>% 
-  select(rec_num, sample_name)
-
-graphite_results <- getRecOS(results$rec_num) %>% 
-  filter(!is.na(reported)) %>% 
-  select(rec_num, fm_corr = f_modern, sig_fm_corr = f_ext_error) %>% 
-  mutate(method = "graphite") %>% 
-  left_join(names, by = "rec_num")
-
-combined_results <- results %>% 
-  filter(str_starts(sample_name, "Pendleton")) %>% 
-  mutate(method = "direct carb") %>% 
-  select(sample_name, method, rec_num, fm_corr, sig_fm_corr) %>% 
-  bind_rows(graphite_results) %>% 
-  group_by(rec_num) %>% 
-  mutate(fm_mean = mean(fm_corr),
-         fm_diff = fm_corr - fm_mean) %>% 
-  left_join(rename(names, Name = sample_name), by = "rec_num") %>% 
-  ungroup()
-
-combined_results %>% 
-  select(sample_name, rec_num, method, fm_corr, sig_fm_corr) %>% 
-  arrange(rec_num) %>% 
-knitr::kable()
-```
-
 ### Difference plot
 
-```{r}
-combined_results %>% 
-  ggplot(aes(fm_corr, fm_diff, color = method, shape = method)) +
-  geom_hline(yintercept = 0) +
-  geom_pointrange(aes(ymin = fm_diff - sig_fm_corr, 
-                      ymax = fm_diff + sig_fm_corr),
-                  size = 1) +#,
-                  #position = position_dodge2(width = 0.02)) +
-  #ylim(-0.02, 0.02) +
-  labs(title = "Haiti Core Graphite vs HGIS",
-       x = "Fraction modern",
-       y = "Fm - mean Fm") + theme_classic()
-```
 
 ```{r}
 combined_results %>% 
@@ -158,15 +167,48 @@ combined_results %>%
   theme_classic() +
   theme(axis.text.x = element_blank(),
         axis.ticks.x = element_blank()) +
-  facet_wrap("Name", scales = "free")
+  facet_wrap("rec_num", scales = "free")
 ```
 
-### Outliers
 
-Need to get current
+```{r}
+ggplot(cr_no) +
+  geom_hline(yintercept = 0) +
+  #geom_hline(yintercept = mean_diff$fm_diff_mean, color = "blue") +
+  #geom_hline(yintercept = mean_diff$fm_diff_mean + mean_diff$fm_diff_sd, color = "lightblue") +
+  #geom_hline(yintercept = mean_diff$fm_diff_mean - mean_diff$fm_diff_sd, color = "lightblue") +
+  geom_pointrange(aes(depth, fm_diff, color = method, shape = method,
+                      ymin = fm_diff - sig_fm_corr, 
+                      ymax = fm_diff + sig_fm_corr),
+                  position = "jitter") +
+  scale_color_manual(values = c("#00b7bd", "#b7bf10")) +
+  scale_y_continuous(breaks = breaks_extended(7),
+                     labels = label_percent(suffix = "",
+                                            accuracy = 1)) +
+  labs(title = "HGIS measurements agree with graphite",
+       subtitle = "Sediment core macrofossils measured via HGIS and graphite",
+       x = "Core depth (cm)",
+       y = "HGIS - graphite (pMC)") +
+  theme(legend.position = c(0.80, 0.85),
+        legend.direction = "horizontal",
+        legend.background = element_rect(fill = "white", color = "black")) 
+```
+
+### Diffs
 
 ```{r}
 combined_results %>% 
   filter(abs(fm_diff) > 0.02) %>% 
-  select(sample_name, method, fm_corr, sig_fm_corr)
+  select(sample_name, he12c, fm_diff, fm_corr, sig_fm_corr) %>% 
+  arrange(he12c)
+```
+
+### Outliers
+
+171996 was also HGIS outlier! Maybe a bad sample?
+
+```{r}
+combined_results %>% 
+  filter(abs(fm_diff) > 0.02) %>% 
+  select(sample_name, method, he12c, fm_corr, sig_fm_corr)
 ```
