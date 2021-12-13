@@ -94,6 +94,10 @@ results <- wheel %>%
   filter(wheel_pos %in% c(2:11, 13:21)) %>% 
   select(wheel_pos, rec_num, sample_name, he12c, norm_ratio, sig_norm_ratio, fm_corr, sig_fm_corr, fm_diff, sigma)
 
+names <- results %>% 
+  ungroup() %>% 
+  select(rec_num, sample_name)
+
 graphite_results <- getRecOS(results$rec_num) %>% 
   filter(!is.na(reported)) %>% 
   select(rec_num, fm_corr = f_modern, sig_fm_corr = f_ext_error) %>% 
