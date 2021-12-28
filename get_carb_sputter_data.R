@@ -6,6 +6,7 @@ library(here)
 
 # build nested list of wheels and positions to get desired data
 wheels <- list("CFAMS121020" = c(15, 84, 81, 97, 99, 100, 101),
+               "USAMS042421" = c(39:58),
                "USAMS112321" = c(0:11),
                "USAMS112621" = c(0:22))
 
@@ -27,18 +28,18 @@ map2_dfr(names(wheels), wheels, readPos) %>%
 
 # All of the above won't work for early wheels since they aren't in snics_results! Ugh.
 # set up file paths for wheels to read
-dir <- "/mnt/shared"
+# Linux path: dir <- "/mnt/shared"
+dir <- "H:"
 wheels <- list("CFAMS/CFAMS Results/2010 Results/CFAMS010810R.XLS" = c(66:80), 
                "CFAMS/CFAMS Results/2010 Results/CFAMS073010R.XLS" = c(25:41), 
                "CFAMS/CFAMS Results/2010 Results/CFAMS122010R.XLS" = c(15:22), 
                "CFAMS/CFAMS Results/2011 Results/CFAMS012111R.XLS" = c(38:61), 
-               "CFAMS/CFAMS Results/2011 Results/CFAMS050211R.XLS" = c(42:73),
-               "USAMS/Results/USAMS042321R.txt" = c(39:58))
+               "CFAMS/CFAMS Results/2011 Results/CFAMS050211R.XLS" = c(42:73))
 
 paths <- file.path(dir, names(wheels))  
 
 # function to get lines for positions from results file
-readPos <- function(file, pos) {
+read_old_pos <- function(file, pos) {
   read_tsv(file, skip = 4, comment = "=") %>% # readResfile doesn't work with these paths?
     filter(Pos %in% pos) %>% 
     mutate(wheel = str_extract(file, "\\w{5}\\d{6}")) %>% 
@@ -51,7 +52,7 @@ readPos <- function(file, pos) {
 
 # read data for wheels and put into a dataframe
 # map works like: for file in paths, readResfile(file)
-data <- map2_dfr(paths, wheels, readPos)  %>% 
+data <- map2_dfr(paths, wheels, read_old_pos)  %>% 
     mungeResfile()
 
 # write data to a file
