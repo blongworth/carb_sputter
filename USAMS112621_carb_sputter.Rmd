@@ -13,58 +13,8 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(amstools)
 library(scales)
-```
 
-Functions for adding consensus value and blank correction.
-
-```{r}
-add_consenus <- function(df) {
-  # get rec_num
-  db <- conNOSAMS()
-  query <- glue::glue_sql("SELECT tp_num, rec_num
-             FROM target
-             WHERE tp_num IN ({tpnums*})",
-             tpnums = df[['tp_num']],
-             .con = db
-  )
-  
-  recs <- odbc::dbSendQuery(db, query)
-  recnums <- odbc::dbFetch(recs)
-  odbc::dbClearResult(recs)
-  df <- left_join(df, recnums)
-  # get cons table
-  std <- amstools::getStdTable()
-  # join on rec_num
-  df %>%  
-    left_join(select(std, rec_num, fm_consensus), by = "rec_num") %>% 
-    mutate(fm_consensus = case_when(rec_num == 101730 ~ 1.0398,
-                                    rec_num == 72446 ~ 0.0013,
-                                    TRUE ~ fm_consensus))
-}
-
-blank_cor_carb <- function(data, blanks = NULL, fmstd = 1.0398) {
-  if (!is.null(blanks)) {
-    data <- data %>% 
-      mutate(sample_type = case_when(wheel_pos %in% blanks ~ "B",
-                                     sample_type == "B" ~ "U",
-                                     TRUE ~ sample_type ))
-  }
-  
-  blanks <- data %>% 
-    filter(sample_type == "B")
-  
-  data['sig_norm_ratio'] <- pmax(data['int_err'], data['ext_err'])
-  
-  meanblank <- mean(blanks$norm_ratio)
-  
-  # get blank error using SNICSer error floor
-  blankerr <- amstools::blankErr(blanks$norm_ratio, blanks$sig_norm_ratio) # uses SNICSer error floor method
-  # apply blank correction and propagate error
-  data %>% 
-    mutate(fm_corr = amstools::doLBC(norm_ratio, meanblank, fmstd),
-           sig_fm_corr = amstools::doLBCerr(norm_ratio, meanblank, fmstd, sig_norm_ratio, blankerr)
-    )
-}
+source("carb_sputter_functions.R")
 ```
 
 Load data, blank correct, add consensus values and comparison to consensus
@@ -124,19 +74,6 @@ combined_results <- left_join(combined_results, depth, by = "rec_num") %>%
   mutate(rc_age = -8033 * log(fm_corr),
          sig_rc_age = rc_age - -8033 * log(fm_corr + sig_fm_corr))
 
-# No outliers
-cr_no <- combined_results %>% 
-  filter(abs(fm_diff_mean) < 0.03)
-
-mean_diff <- cr_no %>% 
-  filter(method == "direct carb") %>% 
-  summarise(across(fm_diff, list(mean = mean, sd = sd)))
-
-mean_errs <- cr_no %>% 
-  group_by(method) %>% 
-  summarise(mean_sig = mean(sig_fm_corr)) %>% 
-  pivot_wider(names_from = method,
-              values_from = mean_sig)
 ```
 
 ```{r}
@@ -148,7 +85,34 @@ ggplot(results, aes(fm_corr, fm_diff)) +
   geom_point()
 ```
 
+### Outliers
 
+Rec 171996 was also HGIS outlier!  HGIS value was 5% high. Maybe a something about the sample?
+
+```{r}
+combined_results %>% 
+  filter(abs(fm_diff) > 0.02) %>% 
+  select(rec_num, sample_name, he12c, fm_diff, fm_corr, sig_fm_corr) %>% 
+  arrange(he12c)
+```
+
+
+```{r}
+# Remove 171996, which was 5% high for both HGIS and carb sputter
+cr_no <- combined_results %>% 
+  filter(rec_num != 171996)
+
+mean_diff <- cr_no %>% 
+  filter(method == "direct carb") %>% 
+  summarise(across(fm_diff, list(mean = mean, sd = sd)))
+
+mean_errs <- cr_no %>% 
+  group_by(method) %>% 
+  summarise(mean_sig = mean(sig_fm_corr)) %>% 
+  pivot_wider(names_from = method,
+              values_from = mean_sig)
+
+```
 
 ## Agreement with graphite
 
@@ -184,35 +148,20 @@ ggplot(cr_no) +
   geom_pointrange(aes(depth, fm_diff, color = method, shape = method,
                       ymin = fm_diff - sig_fm_corr, 
                       ymax = fm_diff + sig_fm_corr),
-                  position = "jitter") +
+                  position = "dodge") +
   scale_color_manual(values = c("#00b7bd", "#b7bf10")) +
   scale_y_continuous(breaks = breaks_extended(7),
                      labels = label_percent(suffix = "",
                                             accuracy = 1)) +
-  labs(title = "HGIS measurements agree with graphite",
-       subtitle = "Sediment core macrofossils measured via HGIS and graphite",
+  labs(title = "Carbonate sputtering agreement with graphite",
+       subtitle = "Sediment core macrofossils measured via carbonate sputtering and graphite",
        x = "Core depth (cm)",
-       y = "HGIS - graphite (pMC)") +
-  theme(legend.position = c(0.80, 0.85),
+       y = "Carb - graphite (pMC)") +
+  theme_classic() +
+  theme(legend.position = c(0.8, 0.85),
         legend.direction = "horizontal",
-        legend.background = element_rect(fill = "white", color = "black")) 
+        legend.background = element_rect(fill = "white", color = "black")) +
+  ylim(-.05, 0.05)
 ```
 
-### Diffs
 
-```{r}
-combined_results %>% 
-  filter(abs(fm_diff) > 0.02) %>% 
-  select(sample_name, he12c, fm_diff, fm_corr, sig_fm_corr) %>% 
-  arrange(he12c)
-```
-
-### Outliers
-
-171996 was also HGIS outlier! Maybe a bad sample?
-
-```{r}
-combined_results %>% 
-  filter(abs(fm_diff) > 0.02) %>% 
-  select(sample_name, method, he12c, fm_corr, sig_fm_corr)
-```
